@@ -1,0 +1,18 @@
+[root]
+name = "lang-parser"
+version = "0.1.0"
+dependencies = [
+ "oak 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "oak_runtime 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "oak"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "oak_runtime"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
