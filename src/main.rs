@@ -1,206 +1,233 @@
+#![feature(iter_arith)]
 #![feature(plugin)]
 #![plugin(oak)]
 
 extern crate oak_runtime;
+use std::io::{stdin, stdout, Write};
 use oak_runtime::*;
 
-grammar! test {
-    use std::collections::HashMap;
+grammar! haskeel {
     use std::str::FromStr;
 
-    program = (spacing expression)*
-
-    expression = var > parse_expr_var
-               / lit > parse_expr_lit
-               / fcall > parse_expr_fcall
-               / ifthen > parse_expr_ifthen
-               / letin > parse_expr_letin
-               / block > parse_expr_block
-               / record  > parse_expr_record
-               / tuple   > parse_expr_tuple
-               / bracketed > parse_expr
-
-    // Expressions
-    ifthen = kw_if ("|" ifdef)+ (elsedef)? > combine_ifdef
-    ifdef = expression kw_then expression
-    elsedef = kw_else expression > parse_else
-    var = identifier
-    lit = number  > parse_value
-        / boolean > parse_value
-        / string  > parse_value
-        / func    > parse_value
-    fcall = ":" expression (expression)*
-    block = expression (";" expression)* > combine
-    letin = kw_let bindingdef+ kw_in expression
-    bindingdef = pattern eq expression
-    bracketed = lparen expression rparen
-
-    pattern = identifier
-
-    // Literals
-    num_or_none = "_" > no_char
-                / individual_num > some_char
-    num_part = individual_num (num_or_none+ individual_num)? > parse_n_part
-    number = num_part > parse_int
-           // / num_part? "." num_part > parse_float
-    boolean = kw_true > parse_true
-            / kw_false > parse_false
-    string = string_delim string_inner string_delim
-           / string_single_delim string_single_inner string_single_delim
-    string_inner        = .* > to_string
-    string_single_inner = .* > to_string
-    tuple = ltupleparen expression ("," expression)* rtupleparen > combine
-    func = pattern* fbody expression > parse_value_func
-    record = lrecordparen bindingdef* rrecordparen
-
-    spacing = [" \n\t"]* -> ()
-    kw_if = "if"
-    kw_else = "else"
-    kw_then = "then"
-    kw_true = "true"
-    kw_false = "false"
-    kw_let = "let"
-    kw_in = "in"
-    eq = "="
-    string_delim = "\""
-    string_single_delim = "'"
-    fbody = "=>"
-    identifier = (["a-zA-Z"] ["_a-zA-Z0-9"]*) > combine_to_string
-    individual_num = ["0-9"]
-    lparen = "("
-    rparen = ")"
-    ltupleparen = "["
-    rtupleparen = "]"
-    lrecordparen = "{"
-    rrecordparen = "}"
-
-    fn no_char() -> Option<char> { None }
-    fn some_char(c: char) -> Option<char> { Some(c) }
-    fn parse_true() -> bool { true }
-    fn parse_false() -> bool { false }
-
-    fn combine(first: Expression, mut second: Vec<Expression>) -> Vec<Expression> {
-        second.insert(0, first);
-        second
-    }
-
-    fn combine_ifdef(mut first: Vec<IfDef>, second: Option<IfDef>) -> Vec<IfDef> {
-        if let Some(s) = second { first.insert(0, s); }
-        first
-    }
-
-    fn combine_to_string(first: char, mut rest: Vec<char>) -> String {
-        rest.insert(0, first);
-        rest.into_iter().collect()
-    }
-
-    fn parse_else(e: Expression) -> (Expression, Expression) {
-        (Expression::Literal(Value::Bool(true)), e)
-    }
-
-    fn parse_n_part(a: char, b: Option<(Vec<Option<char>>, char)>) -> String {
-        match b {
-            None => a.to_string(),
-            Some((s_b, c)) => {
-                let mut out = vec![a];
-                for o_char in s_b.into_iter() {
-                    if let Some(chr) = o_char { out.push(chr); }
-                }
-                out.push(c);
-                out.into_iter().collect()
-            }
-        }
-    }
-
-    fn escaped_quote() -> Vec<char> { vec!['"'] }
-    fn escaped_single_quote() -> Vec<char> { vec!['\''] }
-
-    fn to_string(raw: Vec<char>) -> String {
-        raw.into_iter().collect()
-    }
-
-    /*fn parse_num_part<T: IntoIter<char>>(raw: T) -> usize {
-        usize::from_str(&raw.into_iter().collect())
-    }*/
-
-    fn parse_int(i: String) -> i64 { i64::from_str(&i).unwrap() }
-    fn parse_float(a: Option<usize>, b: usize) -> f64 {
-        use std::num::*;
-        let bf = b as f64;
-        (a.unwrap_or_default() as f64) + (
-                bf /
-                f64::powi(10.0, bf.log(10.0).floor() as i32 + 1)
-            )
-    }
-
-    fn parse_value<T: Into<Value>>(inner: T) -> Value {
-        inner.into()
-    }
-
-    fn parse_expr_var(v: String) -> Expression { Expression::Variable(v) }
-    fn parse_expr_lit(v: Value) -> Expression { Expression::Literal(v) }
-    fn parse_expr_fcall(v0: Expression, v1: Vec<Expression>) -> Expression { Expression::FCall(Box::new(v0), v1) }
-    fn parse_expr_ifthen(v: Vec<IfDef>) -> Expression { Expression::If(v) }
-    fn parse_expr_letin(v0: Vec<BindingDef>, v1: Expression) -> Expression { Expression::LetIn(v0, Box::new(v1)) }
-    fn parse_expr_block(v: Vec<Expression>) -> Expression { Expression::Block(v) }
-    fn parse_expr_record(v: Vec<(String, Expression)>) -> Expression { Expression::Record(v) }
-    fn parse_expr_tuple(v: Vec<Expression>) -> Expression { Expression::Tuple(v) }
-    fn parse_expr(v: Expression) -> Expression { v }
-
-    fn parse_value_func(v0: Vec<Pattern>, v1: Expression) -> Func { (v0, Box::new(v1)) }
+    #[derive(Debug)]
+    pub struct Binding(pub String, pub PExpr);
 
     pub type PExpr = Box<Expression>;
+    #[derive(Debug)]
     pub enum Expression {
+        Literal(u64),
         Variable(String),
-        Literal(Value),
-        FCall(PExpr, Vec<Expression>),
-        If(Vec<IfDef>),
-        LetIn(Vec<BindingDef>, PExpr),
-        Block(Vec<Expression>),
-        Record(Vec<(String, Expression)>),
-        Tuple(Vec<Expression>),
+        LetIn(Binding, PExpr),
+        Apply {
+            func: Function,
+            params: Vec<Expression>,
+        },
     }
 
-    pub type BindingDef = (Pattern, Expression);
-    pub type IfDef = (Expression, Expression);
-    pub type Func = (Vec<Pattern>, PExpr);
-    pub type Pattern = String;
-
-    pub enum Value {
-        Number(i64),
-        Bool(bool),
-        String(String),
-        Function(Func),
-        Tuple(Vec<Value>),
-        Record(HashMap<String, Value>),
-        Error(String),
+    #[derive(Debug)]
+    pub enum Function {
+        Add,
+        Min,
+        Mul,
+        Div,
+        Exp,
+        Neg,
     }
 
-    impl Into<Value> for i64 {
-        fn into(self) -> Value { Value::Number(self) }
+    program = spacing expression
+
+    expression = term (term_op term)* > fold_left
+    term = expo (factor_op expo)* > fold_left
+    expo = (factor expo_op)* factor > fold_right
+
+    literal   = int spacing > to_number
+    variable  = ident spacing
+    let_in    = let_kw binding in_kw expression
+
+    factor = literal           > lit
+           / variable          > var
+           / let_in            > let_in
+           / un_op factor      > un_op
+           / lparen expression rparen
+
+    term_op   = add_op > add
+              / min_op > min
+    factor_op = mul_op > mul
+              / div_op > div
+    expo_op   = exp_op > exp
+    un_op     = min_op > neg
+
+    binding = variable bind_op expression
+
+    add_op  = "+" spacing
+    min_op  = "-" spacing
+    exp_op  = "^" spacing
+    mul_op  = "*" spacing
+    div_op  = "/" spacing
+    bind_op = "=" spacing
+    lparen  = "(" spacing
+    rparen  = ")" spacing
+
+    int = ["0-9"]+ > to_string
+    ident = !keyword ["_a-zA-Z"] ["a-zA-Z0-9_"]* > collapse
+
+    keyword = let_kw
+            / in_kw
+    let_kw = "let" spacing
+    in_kw = ";" spacing
+    spacing = [" \n\r\t"]* -> ()
+
+    fn collapse(raw_first: char, raw_rest: Vec<char>) -> String {
+        vec![raw_first].into_iter().chain(raw_rest.into_iter()).collect()
     }
 
-    impl Into<Value> for String {
-        fn into(self) -> Value { Value::String(self) }
+    fn to_string(raw: Vec<char>) -> String { raw.into_iter().collect() }
+    fn to_number(i: String) -> u64 { u64::from_str(&i).unwrap() }
+
+    fn bin_expr(first: Expression, (bin, second): (Function, Expression)) -> Expression {
+        Expression::Apply { func: bin, params: vec![first, second] }
     }
 
-    impl Into<Value> for Func {
-        fn into(self) -> Value { Value::Function(self) }
+    fn fold_left(head: Expression, rest: Vec<(Function, Expression)>) -> Expression {
+        rest.into_iter().fold(head, bin_expr)
     }
 
-    impl Into<Value> for bool {
-        fn into(self) -> Value { Value::Bool(self) }
+    fn fold_right(front: Vec<(Expression, Function)>, last: Expression) -> Expression {
+        front.into_iter().rev().fold(last, |a, (b, op)| bin_expr(a, (op, b)))
+    }
+
+    fn var(name: String) -> Expression { Expression::Variable(name) }
+    fn lit(i: u64) -> Expression { Expression::Literal(i) }
+    fn let_in(bind: (String, Expression), expr: Expression) -> Expression { Expression::LetIn(Binding(bind.0, Box::new(bind.1)), Box::new(expr)) }
+    fn un_op(fun: Function, expr: Expression) -> Expression {
+        Expression::Apply { func: fun, params: vec![expr] }
+    }
+
+    fn add() -> Function { Function::Add }
+    fn min() -> Function { Function::Min }
+    fn mul() -> Function { Function::Mul }
+    fn div() -> Function { Function::Div }
+    fn exp() -> Function { Function::Exp }
+    fn neg() -> Function { Function::Neg }
+}
+
+fn eval(program: haskeel::Expression) -> Result<i64, String> {
+    let mut cntxt: Vec<(String, i64)> = vec![];
+    execute(program, &mut cntxt)
+}
+
+fn execute(program: haskeel::Expression, context: &mut Vec<(String, i64)>) -> Result<i64, String> {
+    use haskeel::Expression::*;
+    match program {
+        Literal(i) => Ok(i as i64),
+        Variable(var) =>
+            // rev so shadowed variable names work correctly
+            if let Some(tup) = context.iter().rev().find(|tup| tup.0 == var) {
+                Ok(tup.1)
+            } else {
+                Err(format!("The variable {} does not exist.", var))
+            },
+        LetIn(bind, expr) =>
+        {
+            let haskeel::Binding(name, bexp) = bind;
+            let eval_bind = try!(execute(*bexp, context));
+            context.push(
+                (name, eval_bind)
+            );
+            let out = execute(*expr, context);
+            context.pop();
+            out
+        },
+        Apply {
+            func: f,
+            params: par,
+        } => Ok(apply(
+            f,
+            try!(
+                par.into_iter().map(|e|
+                    execute(e, context)
+                ).settle()
+            )
+        )),
     }
 }
 
-fn main() {
-    let prog = r##"
-        let a = 0
-        in a
-    "##;
+fn apply(func: haskeel::Function, params: Vec<i64>) -> i64 {
+    use haskeel::Function::*;
+    let mut params_iter = params.into_iter();
+    match func {
+        Add => params_iter.sum(),
+        Min =>
+            if let Some(n) = params_iter.next() {
+                n - params_iter.sum::<i64>()
+            } else {
+                0
+            },
+        Mul => params_iter.product(),
+        Div =>
+            if let Some(n) = params_iter.next() {
+                n / params_iter.product::<i64>()
+            } else {
+                0
+            },
+        Exp =>
+            if let Some(n) = params_iter.next() {
+                params_iter.map(|i| i as u32).fold(n, i64::pow)
+            } else {
+                0
+            },
+        Neg =>
+            if let Some(n) = params_iter.next() {
+                -n
+            } else {
+                0
+            },
+    }
+}
 
-    match test::parse_program(prog.stream()).into_result() {
-        Ok((_, _)) => println!("Success!"), 
-        Err(e) => println!("Failed parsing, reason: {}", e)
+trait Settle<O, E> {
+    fn settle(self) -> Result<O, E>;
+}
+
+impl<T, A, B> Settle<Vec<A>, B> for T where T: Iterator<Item=Result<A, B>> {
+    fn settle(self) -> Result<Vec<A>, B> {
+        let mut out = vec![];
+
+        for i in self {
+            match i {
+                Ok(o)  => out.push(o),
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(out)
+    }
+}
+
+fn print(msg: &'static str) {
+    print!("{}", msg);
+    stdout().flush();
+}
+
+fn main() {
+    let mut prog = "".to_owned();
+    let std = stdin();
+
+    print("=> ");
+    'rw: loop {
+        std.read_line(&mut prog).unwrap();
+
+        match haskeel::parse_program(prog.stream()).into_result() {
+            Ok((a, _)) =>
+                match eval(a.data) {
+                    Ok(out) => println!("(evaluates to {})", out),
+                    Err(e)  => println!("Error: {}", e),
+                }
+            ,
+            Err(e) => { println!("{}", e); print(".. "); continue 'rw; },
+        }
+
+        prog = "".to_owned();
+        print("=> ");
     }
 }
